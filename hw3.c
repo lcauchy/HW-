@@ -191,7 +191,7 @@ int catchPipe(List* instance, char* line){
 		ret = 1;
 	
 	while(word){
-		//printf("inside parseColon. word is %s with size %ld\n",word, strlen(word));
+		//printf("inside catchPipe. word is %s with size %ld\n",word, strlen(word));
 		insert(instance, word);
 		word = strtok(NULL, "|");
 		++ret;
@@ -246,26 +246,161 @@ int main(){
 			char* temp = pop_front(instance);
 			
 			if(catchPipe(pipeSep, temp) == 2){
-				int pipefds[2]; int who;
+				int pipefds[2]; int proc1 = -1, proc2 = -1;
 				if(pipe(pipefds) == -1){
 					perror("pipe\n");
 					exit(EXIT_FAILURE);
 				}
 				
+				char* command1 = pop_front(pipeSep);
+				char* command2 = pop_front(pipeSep);
+				
 				int old_out = dup(STDOUT_FILENO);
 				int old_in = dup(STDIN_FILENO);
 				
-				char* next = pop_front(pipeSep);
-				if((who = fork()) != 0){ // parent
+				int s1 = 0; int *status1 = &s1;
+				int s2 = 0; int *status2 = &s2;
+				
+				if((proc1 = fork()) != 0){
+					waitpid(proc1, status1, WEXITSTATUS(*status1));
+				}
+				
+				else if(proc1 == 0){
+					close(pipefds[0]); // close read end in child 1
+					dup2(pipefds[1], STDOUT_FILENO); // redirect out to write end
+					count = build_argsarray(command1, ptrArray);
+					if( (execvp(ptrArray[0], ptrArray)) < 0){  // put this in an if statement to get the return value
+						dup2(old_out, STDOUT_FILENO); // change stdout back after proc1 finishes redirecting io
+						printf("in proc 1 error invalid command %s\n", ptrArray[0]);
+						exit(-1);
+					}
+				}
+				
+				if((proc2 = fork()) != 0){
+					close(pipefds[0]); //close read end in parent;
+					close(pipefds[1]);  // close write end in parent
+					dup2(old_out, STDOUT_FILENO); // change back stdout in parent
+					waitpid(proc2, status2, WEXITSTATUS(*status2));
+				}
+				
+				else if(proc2 == 0){
+					close(pipefds[1]); // close write end in child 2
+					dup2(pipefds[0], STDIN_FILENO); // redirect stdin to get from read end
+					count = build_argsarray(command2, ptrArray);
+					if( (execvp(ptrArray[0], ptrArray)) < 0){  // put this in an if statement to get the return value
+						dup2(old_out, STDOUT_FILENO); // change stdout back after proc1 finishes redirecting io
+						printf("in proc 1 error invalid command %s\n", ptrArray[0]);
+						exit(-1);
+					}
+				}
+				
+				if(proc1 != 0 && proc2 != 0){
+					dup2(old_in, STDIN_FILENO); // change stdin back
+					printf("pid:%d status:%d\n", proc1, (*status1 % 255) );
+					printf("pid:%d status:%d\n", proc2, (*status2 % 255) );
+				}
+				
+				close(old_in); close(old_out);
+			}
+				
+			/*	char* next = pop_front(pipeSep);
+				dup2(pipefds[1], STDOUT_FILENO);
+				if((proc1 = fork()) != 0){
+					int s1 = 0; int *status1 = &s1;
+					//printf("next is %s\n", next);     
+					//count = build_argsarray(next, ptrArray);
+					waitpid(proc1, status1, WEXITSTATUS(*status1));
+					//close(pipefds[1]); // close write end of pipe
+					dup2(old_out, STDOUT_FILENO); // change stdout back after proc1 finishes redirecting io
+					//printf("made it back to parent\n");
+					close(pipefds[1]);
+					clean(ptrArray, count);
+					dup2(pipefds[0], STDIN_FILENO); 
+					if((proc2 = fork()) != 0){
+						//printf("made it to parent, forkd proc2\n");
+						int s2 = 0; int *status2 = &s2;
+						waitpid(proc2, status2, WEXITSTATUS(*status2));
+						printf("pid 1st:%d status:%d\n", proc1, (*status1 % 255) );
+						printf("pid 2nd:%d status:%d\n", proc2, (*status2 % 255) );
+						close(pipefds[0]); 
+						//close(pipefds[1]);
+						dup2(old_in, STDIN_FILENO); 
+						//dup2(old_out, STDOUT_FILENO);
+					} 
+				}
+				
+				if(proc1 == 0){
+					//close(pipefds[0]); // close read end
+					//dup2(pipefds[1], STDOUT_FILENO);
+
+				   //printf("in proc1\n");
+					//dup2(pipefds[1], STDOUT_FILENO); // change stdout to write end of pipe
+					//close read end of pipe
+					
+					count = build_argsarray(next, ptrArray);
+					if( (execvp(ptrArray[0], ptrArray)) < 0){  // put this in an if statement to get the return value
+						dup2(old_out, STDOUT_FILENO); // change stdout back after proc1 finishes redirecting io
+						printf("in proc 1 error invalid command %s\n", ptrArray[0]);
+						exit(-1);
+					}	
+				}
+				
+				if(proc2 == 0){
+					//printf("in proc2\n");
+					//close(pipefds[1]); // close write end of pipe
+					//dup2(pipefds[0], STDIN_FILENO); // change stdin to read end of pipe
+					//printf("in proc2\n");
+					next = pop_front(pipeSep);
+					//printf(" in proce 2 im about to %s \n", next);
+					clean(ptrArray, count);
+					count = build_argsarray(next, ptrArray);
+					//printf("in proc2 comand is %s", next);
+					if( (execvp(ptrArray[0], ptrArray)) < 0){  // put this in an if statement to get the return value
+						dup2(old_in, STDIN_FILENO); // change stdout back after proc1 finishes redirecting io
+						printf("error proc 2 invalid command %s\n", ptrArray[0]);
+						exit(-1);
+					}
+				}
+				dup2(old_in, STDIN_FILENO); dup2(old_out, STDOUT_FILENO);
+				memset(line,0,sizeof(line));
+				//continue;	
+			}*/
+					
+				/*if( (proc2 = fork()) == 0){
+						next = pop_front(pipeSep);
+						close(pipefds[1]); // close write end of pipe
+						dup2(pipefds[0], STDIN_FILENO);
+						//printf("in child pipe, want to run: %s\n", next);
+						close(pipefds[0]);
+						count = build_argsarray(next, ptrArray);
+						//run(next, count, ptrArray);
+						if( (execvp(ptrArray[0], ptrArray)) < 0){  // put this in an if statement to get the return value
+							printf("error invalid command\n");
+							exit(-1);
+						}
+						printf("made it here\n");
+						//dup2(old_in, STDIN_FILENO);
+						//exit(0);	
+					}
+					dup2(pipefds[1], STDOUT_FILENO);
+					count = build_argsarray(next, ptrArray);
+					int s = 0; int *status = &s;
+					if( (execvp(ptrArray[0], ptrArray)) < 0){  // put this in an if statement to get the return value
+						printf("error invalid command\n");
+						exit(-1);
+					}*/
+					
+				/*if((who = fork()) != 0){ // parent
 				    close(pipefds[0]); // close read end of pipe
-				    //printf("in parent pipe, want to run: %s\n", next);
 					dup2(pipefds[1], STDOUT_FILENO); // redirect stdout to read end
 					run(next, count, ptrArray);
 					dup2(old_out, STDOUT_FILENO); // change back;
 					close(pipefds[1]); // close write end
 					int s = 0; int *status = &s;
 					waitpid(who, status, WEXITSTATUS(*status));
-					printf("pid:%d status:%d\n", who, (*status % 255) );
+					//wait(status);
+					printf("ppppid:%d status:%d\n", who, (*status % 255) );
+					dup2(old_in, STDIN_FILENO);
 						
 				}
 				else if(who == 0){ // child
@@ -274,12 +409,19 @@ int main(){
 					dup2(pipefds[0], STDIN_FILENO);
 					//printf("in child pipe, want to run: %s\n", next);
 					close(pipefds[0]);
-					run(next, count, ptrArray);	
-					dup2(old_in, STDIN_FILENO);	
-				}	
-				continue;	
-			}
+					count = build_argsarray(next, ptrArray);
+					//run(next, count, ptrArray);
+					if( (execvp(ptrArray[0], ptrArray)) < 0){  // put this in an if statement to get the return value
+						printf("error invalid command\n");
+						exit(-1);
+					}
+					printf("made it here\n");
+					//dup2(old_in, STDIN_FILENO);
+					//exit(0);	
+				}*/	
 			
+			else{
+				
 			count = build_argsarray(temp, ptrArray);
 			
 			if(sig_flag == 1){
@@ -304,6 +446,7 @@ int main(){
 				clean(ptrArray, count);
 			}	
 		}
+	}
 		memset(line,0,sizeof(line));
 		
 		if(sig_flag == 1){
